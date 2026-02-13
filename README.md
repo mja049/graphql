@@ -38,3 +38,32 @@ npm run preview
 ```
 
 This produces a `dist/` folder.
+
+## Deploy to GitHub Pages
+
+This repo includes a GitHub Actions workflow at `.github/workflows/deploy-pages.yml` that builds the Vite site and publishes `dist/` to GitHub Pages.
+
+1) Push this project to a GitHub repository (github.com)
+
+- Create a repo on GitHub (example: `graphql`)
+- Add it as a remote (or replace your current `origin` if it’s not GitHub):
+
+```bash
+git remote add github https://github.com/<YOUR_USER>/<YOUR_REPO>.git
+git push -u github master
+```
+
+2) Enable Pages (one-time)
+
+- GitHub repo → **Settings** → **Pages**
+- Under **Build and deployment**, choose **Source: GitHub Actions**
+
+3) Get your link
+
+After the workflow finishes, your site will be available at:
+
+`https://<YOUR_USER>.github.io/<YOUR_REPO>/`
+
+Notes:
+- GitHub Pages is static hosting: the Vite dev proxy in `vite.config.js` only works locally.
+- If the Reboot01 API blocks requests from `github.io` via CORS, you’ll need a proxy backend (or host somewhere that can proxy) for login/GraphQL to work.
