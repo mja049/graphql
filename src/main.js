@@ -1,4 +1,3 @@
-import "./style.css";
 import {
   login,
   getToken,
