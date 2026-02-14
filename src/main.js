@@ -5,8 +5,8 @@ import {
   logout,
   decodeJwtPayload,
   getUserIdFromToken,
-} from "./lib/auth";
-import { gql, GraphQLAuthError } from "./lib/graphql";
+} from "./lib/auth.js";
+import { gql, GraphQLAuthError } from "./lib/graphql.js";
 import {
   splitXp,
   filterByLastDays,
@@ -15,8 +15,8 @@ import {
   formatXp,
   auditTotals,
   passFailCounts,
-} from "./lib/stats";
-import { lineChartSvg, donutChartSvg } from "./lib/charts";
+} from "./lib/stats.js";
+import { lineChartSvg, donutChartSvg } from "./lib/charts.js";
 
 let cached = null;
 let cachedAt = 0;
@@ -517,11 +517,11 @@ function renderOnePage(data) {
       </div>
 
       <div class="card">
-        <h3>Audit Ratio</h3>
+        <h3>Audit Ratio — ${MODULE_NAME}</h3>
         <div class="kv">
-          <div><span class="k">Done</span><span class="v">${formatXp(data.audits.up)}</span></div>
-          <div><span class="k">Received</span><span class="v">${formatXp(data.audits.down)}</span></div>
-          <div><span class="k">Ratio</span><span class="v">${Number.isFinite(data.audits.ratio) ? data.audits.ratio.toFixed(2) : "∞"}</span></div>
+          <div><span class="k">Done</span><span class="v">${formatXp(statsAudits.up)}</span></div>
+          <div><span class="k">Received</span><span class="v">${formatXp(statsAudits.down)}</span></div>
+          <div><span class="k">Ratio</span><span class="v">${Number.isFinite(statsAudits.ratio) ? statsAudits.ratio.toFixed(1) : "∞"}</span></div>
         </div>
       </div>
 
@@ -576,7 +576,7 @@ function renderOnePage(data) {
             ],
             {
               ariaLabel: "Audits done vs received",
-              centerValue: Number.isFinite(statsAudits.ratio) ? statsAudits.ratio.toFixed(2) : "∞",
+              centerValue: Number.isFinite(statsAudits.ratio) ? statsAudits.ratio.toFixed(1) : "∞",
               centerLabel: "ratio",
               size: 280,
             }

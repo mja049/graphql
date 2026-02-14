@@ -1,4 +1,4 @@
-import { GQL_URL } from "./config";
+import { GQL_URL } from "./config.js";
 
 export class GraphQLAuthError extends Error {
   constructor(message) {
