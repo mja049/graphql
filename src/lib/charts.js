@@ -245,8 +245,10 @@ function formatCompactNumber(n) {
   const abs = Math.abs(Number(n));
   const sign = n < 0 ? "-" : "";
   if (!Number.isFinite(abs)) return String(n);
-  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(2)}B`;
-  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)}k`;
+
+  if (abs >= 1_000_000_000) return `${sign}${Math.round(abs / 1_000_000_000)}B`;
+  if (abs >= 1_000_000) return `${sign}${Math.round(abs / 1_000_000)}M`;
+  if (abs >= 1_000) return `${sign}${Math.round(abs / 1_000)}k`;
   return `${sign}${Math.round(abs)}`;
 }
+

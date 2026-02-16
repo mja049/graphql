@@ -158,6 +158,9 @@ export function formatXp(amount) {
   const sign = amount < 0 ? "-" : "";
 
   if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(1)} MB`;
-  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)} kB`;
+  if (abs >= 1_000) {
+  const kb = abs / 1_000;
+  return `${sign}${Math.round(kb)} kB`;
+}
   return `${sign}${abs} B`;
 }
