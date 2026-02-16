@@ -7,7 +7,6 @@ import {
 } from "./lib/auth.js";
 import { gql, GraphQLAuthError } from "./lib/graphql.js";
 import {
-  splitXp,
   filterByLastDays,
   groupXpByPeriod,
   toCumulative,
@@ -21,60 +20,83 @@ let cached = null;
 let cachedAt = 0;
 let inflight = null;
 
+// =======================
+// BH-MODULE ONLY SCOPE
+// =======================
+
+const BH_SEG_RE = /^bh[-_]?module$/i;
 const MODULE_NAME = "BH-MODULE";
-const MODULE_PATH_RE = /bh[-_]?module/i;
-// Keep this broad because paths vary (BH-MODULE, bh-module, bh_module, etc.)
 const MODULE_GQL_ILIKE = "%bh%module%";
-
-// The platform's "Module" XP board typically includes Piscine-JS XP as part of the program.
-const PISCINE_JS_PATH_RE = /piscine[-_]?js/i;
-
-function isModulePath(path) {
-  return MODULE_PATH_RE.test(String(path || ""));
-}
-
-function isPiscineJsPath(path) {
-  return PISCINE_JS_PATH_RE.test(String(path || ""));
-}
-
-function isModuleProgramPath(path) {
-  const p = String(path || "");
-  return isModulePath(p) || isPiscineJsPath(p);
-}
-
-// Patterns that are NOT standalone projects inside the module
 const NON_PROJECT_RE = /piscine|checkpoint|onboarding/i;
 
-// For XP totals/graphs we still want to include Piscine-JS, but usually exclude
-// onboarding/checkpoint paths to better match the platform dashboard.
-const EXCLUDE_XP_RE = /checkpoint|onboarding/i;
+function pathSegments(path) {
+  return String(path || "").split("/").filter(Boolean);
+}
+function programSeg(path) {
+  const parts = pathSegments(path);
+  return parts[1] || "";
+}
+function restAfterProgram(path) {
+  const parts = pathSegments(path);
+  return parts.slice(2).join("/").toLowerCase();
+}
 
-/**
- * Returns true only for real top-level module projects.
- * Path shape: /<user>/bh-module/<project-name>  (exactly 1 segment after module)
- * Excludes: piscine-*, checkpoint, onboarding, and any deeper sub-paths.
- */
-function isModuleProject(path) {
-  const p = String(path || "");
-  if (!isModulePath(p)) return false;
+function isBhModulePath(path) {
+  return BH_SEG_RE.test(programSeg(path));
+}
 
-  const parts = p.split("/").filter(Boolean);
-  const modIdx = parts.findIndex((s) => MODULE_PATH_RE.test(s));
-  if (modIdx < 0) return false;
+// ✅ exclusion rules to match XP board behavior for BH-only:
+// - exclude onboarding + checkpoint
+// - exclude ANYTHING containing "piscine" under BH-MODULE (piscine-js + its quests/nodes)
+function isExcludedBhXpPath(path) {
+  const rest = restAfterProgram(path); // after /user/bh-module/
+  if (rest.includes("onboarding")) return true;
+  if (rest.includes("checkpoint")) return true;
 
-  // Must have exactly one segment after the module
-  if (parts.length !== modIdx + 2) return false;
+  // ✅ allow ONLY the top-level "piscine-js" project, but exclude its inner quests/paths
+  if (rest.startsWith("piscine-js")) {
+    // allow: /user/bh-module/piscine-js  (exact)
+    // exclude: /user/bh-module/piscine-js/quests/... or anything deeper
+    return rest.includes("/") ? true : false;
+  }
 
-  // The project segment itself must not be a piscine/checkpoint
-  const projectSeg = parts[modIdx + 1];
-  if (NON_PROJECT_RE.test(projectSeg)) return false;
+  // exclude any other piscine stuff
+  if (rest.includes("piscine")) return true;
 
+  return false;
+}
+
+// For pass/fail: count only real BH projects (top-level after program)
+function isBhModuleProject(path) {
+  const parts = pathSegments(path);
+  if (!BH_SEG_RE.test(parts[1] || "")) return false;
+  if (parts.length !== 3) return false; // must be /user/bh-module/<project>
+  if (NON_PROJECT_RE.test(parts[2] || "")) return false;
   return true;
 }
 
+function calcXpTotals(txList) {
+  let earned = 0;
+  let removed = 0; // absolute sum of negatives
+  for (const t of txList) {
+    const a = Number(t.amount || 0);
+    if (a >= 0) earned += a;
+    else removed += Math.abs(a);
+  }
+  return {
+    earned,
+    removed,
+    net: earned - removed, // ✅ this should align with "Total XP" style numbers like 571
+  };
+}
+
+// =======================
+// UI state
+// =======================
+
 const uiState = {
   rangeDays: 0,
-  period: "day", // day | week | month
+  period: "day",
 };
 
 function initUiState() {
@@ -83,19 +105,19 @@ function initUiState() {
     const period = sessionStorage.getItem("period");
     if (range) uiState.rangeDays = Number(range);
     if (period) uiState.period = period;
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
 function persistUiState() {
   try {
     sessionStorage.setItem("rangeDays", String(uiState.rangeDays));
     sessionStorage.setItem("period", uiState.period);
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
+
+// =======================
+// Rendering
+// =======================
 
 function render() {
   const token = getToken();
@@ -300,13 +322,14 @@ function renderContent(data) {
     return;
   }
   content.innerHTML = renderOnePage(data);
-  bindViewHandlers(data);
+  bindViewHandlers();
 }
 
-async function loadProfileData(token) {
-  if (!token) throw new Error("Missing session token.");
+// =======================
+// Data loading
+// =======================
 
-  // ✅ normal query + nested selection
+async function loadProfileData(token) {
   const meQuery = `
     query Me {
       user {
@@ -316,7 +339,6 @@ async function loadProfileData(token) {
     }
   `;
 
-  // ✅ arguments (variables) + filtering
   const xpQuery = `
     query XpTx($limit: Int!) {
       transaction(
@@ -332,7 +354,6 @@ async function loadProfileData(token) {
     }
   `;
 
-  // ✅ audits (up/down)
   const auditsQuery = `
     query Audits($limit: Int!) {
       transaction(
@@ -348,8 +369,6 @@ async function loadProfileData(token) {
     }
   `;
 
-  // ✅ skills
-  // ✅ results for pass/fail (and nested user to demonstrate nesting)
   const resultsQuery = `
     query Results($limit: Int!) {
       result(order_by: { createdAt: desc }, limit: $limit) {
@@ -366,7 +385,6 @@ async function loadProfileData(token) {
     }
   `;
 
-  // ✅ arguments + aggregates (all-time BH-MODULE audits)
   const bhModuleAuditsAggQuery = `
     query BhModuleAuditsAgg($pattern: String!) {
       up: transaction_aggregate(where: { path: { _ilike: $pattern }, type: { _eq: "up" } }) {
@@ -378,7 +396,6 @@ async function loadProfileData(token) {
     }
   `;
 
-  // ✅ All attempts for BH-MODULE — counts every attempt (pass & fail)
   const bhModuleAllResultsQuery = `
     query BhModuleAllResults($pattern: String!, $limit: Int!) {
       result(
@@ -397,9 +414,9 @@ async function loadProfileData(token) {
   try {
     [meData, xpData, auditsData, resultsData] = await Promise.all([
       gql(token, meQuery),
-      gql(token, xpQuery, { limit: 2500 }),
-      gql(token, auditsQuery, { limit: 2500 }),
-      gql(token, resultsQuery, { limit: 2500 }),
+      gql(token, xpQuery, { limit: 5000 }),
+      gql(token, auditsQuery, { limit: 5000 }),
+      gql(token, resultsQuery, { limit: 5000 }),
     ]);
   } catch (e) {
     if (e instanceof GraphQLAuthError) {
@@ -419,23 +436,26 @@ async function loadProfileData(token) {
   const tx = xpData.transaction || [];
   const auditTx = auditsData.transaction || [];
   const results = resultsData.result || [];
-
   if (!me) throw new Error("User data not found.");
 
-  const xp = splitXp(tx);
-  const moduleXp = splitXp(tx.filter((t) => isModulePath(t.path)));
-  const daily = groupXpByPeriod(tx, "day");
-  const cumulative = toCumulative(daily);
+  // ✅ BH-MODULE only, AND exclude onboarding/checkpoint/piscine under BH
+  const bhOnlyTx = tx.filter(
+    (t) => isBhModulePath(t.path) && !isExcludedBhXpPath(t.path)
+  );
 
-  const audits = auditTotals(auditTx);
-  const pf = passFailCounts(results);
+  const bhOnlyXp = calcXpTotals(bhOnlyTx);
 
-  // All-time BH-MODULE:
-  // - audits: via transaction_aggregate
-  // - project pass/fail: all attempts (so retries like make-your-game fail+pass both count)
-  let moduleAgg = { pass: 0, fail: 0, total: 0, up: 0, down: 0, ratio: 0, isFallback: true };
+  // audits (BH aggregate)
+  let moduleAgg = {
+    pass: 0,
+    fail: 0,
+    total: 0,
+    up: 0,
+    down: 0,
+    ratio: 0,
+    isFallback: true,
+  };
 
-  // audits aggregates
   try {
     const a = await gql(token, bhModuleAuditsAggQuery, { pattern: MODULE_GQL_ILIKE });
     const up = Number(a?.up?.aggregate?.sum?.amount ?? 0);
@@ -444,31 +464,29 @@ async function loadProfileData(token) {
     moduleAgg.down = down;
     moduleAgg.ratio = down === 0 ? (up > 0 ? Infinity : 0) : up / down;
   } catch {
-    const moduleAuditTx = auditTx.filter((t) => isModulePath(t.path));
+    const moduleAuditTx = auditTx.filter((t) => isBhModulePath(t.path));
     const mAudits = auditTotals(moduleAuditTx);
     moduleAgg.up = mAudits.up;
     moduleAgg.down = mAudits.down;
     moduleAgg.ratio = mAudits.ratio;
   }
 
-  // All attempts for pass/fail (counts every attempt including retries)
+  // pass/fail (BH projects only)
   try {
     const allResults = await gql(token, bhModuleAllResultsQuery, {
       pattern: MODULE_GQL_ILIKE,
-      limit: 5000,
+      limit: 8000,
     });
 
-    const allModuleRows = (allResults?.result || []).filter((r) => isModulePath(r.path));
-    // Keep only real top-level projects + piscines (not sub-exercises / checkpoints)
-    const rows = allModuleRows.filter((r) => isModuleProject(r.path));
+    const allModuleRows = (allResults?.result || []).filter((r) => isBhModulePath(r.path));
+    const rows = allModuleRows.filter((r) => isBhModuleProject(r.path));
     const mPf = passFailCounts(rows);
     moduleAgg.pass = mPf.pass;
     moduleAgg.fail = mPf.fail;
     moduleAgg.total = mPf.total;
     moduleAgg.isFallback = false;
   } catch {
-    // Fallback: use locally fetched results (may be limited)
-    const moduleResults = results.filter((r) => isModulePath(r.path));
+    const moduleResults = results.filter((r) => isBhModulePath(r.path)).filter((r) => isBhModuleProject(r.path));
     const mPf = passFailCounts(moduleResults);
     moduleAgg.pass = mPf.pass;
     moduleAgg.fail = mPf.fail;
@@ -479,35 +497,41 @@ async function loadProfileData(token) {
   return {
     me,
     tx,
+    bhOnlyTx,
+    bhOnlyXp,
     auditTx,
     results,
-    xp,
-    moduleXp,
-    daily,
-    cumulative,
-    audits,
-    pf,
     moduleAgg,
   };
 }
 
+// =======================
+// View
+// =======================
+
 function renderOnePage(data) {
   const range = Number(uiState.rangeDays);
   const period = uiState.period;
-  // Statistics are required, but here we scope them to BH-MODULE only.
-  const filtered = filterByLastDays(data.tx, range);
-  const moduleXpTx = filtered.filter((t) => isModulePath(t.path));
-  const grouped = groupXpByPeriod(moduleXpTx, period);
+
+  const filtered = filterByLastDays(data.bhOnlyTx, range);
+  const grouped = groupXpByPeriod(filtered, period);
   const cumulative = toCumulative(grouped);
 
   const statsAudits = data.moduleAgg
     ? { up: data.moduleAgg.up, down: data.moduleAgg.down, ratio: data.moduleAgg.ratio }
-    : auditTotals(filterByLastDays(data.auditTx, range).filter((t) => isModulePath(t.path)));
+    : auditTotals(filterByLastDays(data.auditTx, range).filter((t) => isBhModulePath(t.path)));
+
   const statsPf = data.moduleAgg
     ? { pass: data.moduleAgg.pass, fail: data.moduleAgg.fail, total: data.moduleAgg.total }
-    : passFailCounts(filterByLastDays(data.results, range).filter((r) => isModulePath(r.path)));
+    : passFailCounts(filterByLastDays(data.results, range).filter((r) => isBhModulePath(r.path)));
 
-  const rangeLabel = !Number.isFinite(range) || range <= 0 ? "All time" : range === 180 ? "Last 6 months" : `Last ${range} days`;
+  const rangeLabel =
+    !Number.isFinite(range) || range <= 0
+      ? "All time"
+      : range === 180
+      ? "Last 6 months"
+      : `Last ${range} days`;
+
   const statsPassText = statsPf.total ? `${statsPf.pass} / ${statsPf.total}` : "0";
 
   return `
@@ -517,39 +541,44 @@ function renderOnePage(data) {
       </div>
 
       <div class="grid">
-      <div class="card">
-        <h3>Identification</h3>
-        <div class="kv">
-          <div><span class="k">Login</span><span class="v">${escapeHtml(data.me.login)}</span></div>
-          <div><span class="k">User ID</span><span class="v">${data.me.id}</span></div>
+        <div class="card">
+          <h3>Identification</h3>
+          <div class="kv">
+            <div><span class="k">Login</span><span class="v">${escapeHtml(data.me.login)}</span></div>
+            <div><span class="k">User ID</span><span class="v">${data.me.id}</span></div>
+          </div>
         </div>
-      </div>
 
-      <div class="card">
-        <h3>XP Earned — ${MODULE_NAME}</h3>
-        <div class="kv">
-          <div><span class="k">Total</span><span class="v">${formatXp(data.moduleXp.net)}</span></div>
-          ${data.moduleXp.removed ? `<div><span class="k">Removed</span><span class="v">${formatXp(data.moduleXp.removed)}</span></div>` : ``}
+        <div class="card">
+          <h3>XP Earned — ${MODULE_NAME}</h3>
+          <div class="kv">
+            <div><span class="k">Total</span><span class="v">${formatXp(data.bhOnlyXp.net)}</span></div>
+            <div><span class="k">Removed</span><span class="v">${formatXp(data.bhOnlyXp.removed)}</span></div>
+          </div>
+          <p class="muted small" style="margin:10px 0 0;">
+            BH-MODULE
+          </p>
         </div>
-      </div>
 
-      <div class="card">
-        <h3>Audit Ratio — ${MODULE_NAME}</h3>
-        <div class="kv">
-          <div><span class="k">Done</span><span class="v">${formatXp(statsAudits.up)}</span></div>
-          <div><span class="k">Received</span><span class="v">${formatXp(statsAudits.down)}</span></div>
-          <div><span class="k">Ratio</span><span class="v">${Number.isFinite(statsAudits.ratio) ? statsAudits.ratio.toFixed(1) : "∞"}</span></div>
+        <div class="card">
+          <h3>Audit Ratio — ${MODULE_NAME}</h3>
+          <div class="kv">
+            <div><span class="k">Done</span><span class="v">${formatXp(statsAudits.up)}</span></div>
+            <div><span class="k">Received</span><span class="v">${formatXp(statsAudits.down)}</span></div>
+            <div><span class="k">Ratio</span><span class="v">${Number.isFinite(statsAudits.ratio) ? statsAudits.ratio.toFixed(1) : "∞"}</span></div>
+          </div>
         </div>
-      </div>
 
-      <div class="card">
-        <h3>${MODULE_NAME} Pass / Fail</h3>
-        <div class="kv">
-          <div><span class="k">Pass</span><span class="v" style="color:var(--green)">${statsPf.pass}</span></div>
-          <div><span class="k">Fail</span><span class="v" style="color:var(--red)">${statsPf.fail}</span></div>
+        <div class="card">
+          <h3>${MODULE_NAME} Pass / Fail</h3>
+          <div class="kv">
+            <div><span class="k">Pass</span><span class="v" style="color:var(--green)">${statsPf.pass}</span></div>
+            <div><span class="k">Fail</span><span class="v" style="color:var(--red)">${statsPf.fail}</span></div>
+          </div>
+          <p class="muted small" style="margin:10px 0 0">
+            All attempts in ${MODULE_NAME}${data.moduleAgg?.isFallback ? " · fallback" : ""}
+          </p>
         </div>
-        <p class="muted small" style="margin:10px 0 0">All attempts in ${MODULE_NAME}${data.moduleAgg?.isFallback ? " · fallback" : ""}</p>
-      </div>
       </div>
     </div>
 
