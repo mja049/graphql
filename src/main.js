@@ -26,12 +26,28 @@ const MODULE_PATH_RE = /bh[-_]?module/i;
 // Keep this broad because paths vary (BH-MODULE, bh-module, bh_module, etc.)
 const MODULE_GQL_ILIKE = "%bh%module%";
 
+// The platform's "Module" XP board typically includes Piscine-JS XP as part of the program.
+const PISCINE_JS_PATH_RE = /piscine[-_]?js/i;
+
 function isModulePath(path) {
   return MODULE_PATH_RE.test(String(path || ""));
 }
 
+function isPiscineJsPath(path) {
+  return PISCINE_JS_PATH_RE.test(String(path || ""));
+}
+
+function isModuleProgramPath(path) {
+  const p = String(path || "");
+  return isModulePath(p) || isPiscineJsPath(p);
+}
+
 // Patterns that are NOT standalone projects inside the module
 const NON_PROJECT_RE = /piscine|checkpoint|onboarding/i;
+
+// For XP totals/graphs we still want to include Piscine-JS, but usually exclude
+// onboarding/checkpoint paths to better match the platform dashboard.
+const EXCLUDE_XP_RE = /checkpoint|onboarding/i;
 
 /**
  * Returns true only for real top-level module projects.
@@ -407,6 +423,7 @@ async function loadProfileData(token) {
   if (!me) throw new Error("User data not found.");
 
   const xp = splitXp(tx);
+  const moduleXp = splitXp(tx.filter((t) => isModulePath(t.path)));
   const daily = groupXpByPeriod(tx, "day");
   const cumulative = toCumulative(daily);
 
@@ -465,6 +482,7 @@ async function loadProfileData(token) {
     auditTx,
     results,
     xp,
+    moduleXp,
     daily,
     cumulative,
     audits,
@@ -489,7 +507,7 @@ function renderOnePage(data) {
     ? { pass: data.moduleAgg.pass, fail: data.moduleAgg.fail, total: data.moduleAgg.total }
     : passFailCounts(filterByLastDays(data.results, range).filter((r) => isModulePath(r.path)));
 
-  const rangeLabel = !Number.isFinite(range) || range <= 0 ? "All time" : `Last ${range} days`;
+  const rangeLabel = !Number.isFinite(range) || range <= 0 ? "All time" : range === 180 ? "Last 6 months" : `Last ${range} days`;
   const statsPassText = statsPf.total ? `${statsPf.pass} / ${statsPf.total}` : "0";
 
   return `
@@ -508,10 +526,10 @@ function renderOnePage(data) {
       </div>
 
       <div class="card">
-        <h3>XP Earned</h3>
+        <h3>XP Earned — ${MODULE_NAME}</h3>
         <div class="kv">
-          <div><span class="k">Total</span><span class="v">${formatXp(data.xp.earned)}</span></div>
-          ${data.xp.removed ? `<div><span class="k">Removed</span><span class="v">${formatXp(data.xp.removed)}</span></div>` : ``}
+          <div><span class="k">Total</span><span class="v">${formatXp(data.moduleXp.net)}</span></div>
+          ${data.moduleXp.removed ? `<div><span class="k">Removed</span><span class="v">${formatXp(data.moduleXp.removed)}</span></div>` : ``}
         </div>
       </div>
 
@@ -544,6 +562,7 @@ function renderOnePage(data) {
             <select id="rangeSel">
               <option value="30" ${range === 30 ? "selected" : ""}>30 days</option>
               <option value="90" ${range === 90 ? "selected" : ""}>90 days</option>
+              <option value="180" ${range === 180 ? "selected" : ""}>6 months</option>
               <option value="365" ${range === 365 ? "selected" : ""}>1 year</option>
               <option value="0" ${range === 0 ? "selected" : ""}>All time</option>
             </select>
