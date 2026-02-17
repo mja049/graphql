@@ -523,7 +523,8 @@ function renderOnePage(data) {
 
   const statsPf = data.moduleAgg
     ? { pass: data.moduleAgg.pass, fail: data.moduleAgg.fail, total: data.moduleAgg.total }
-    : passFailCounts(filterByLastDays(data.results, range).filter((r) => isBhModulePath(r.path)));
+    : passFailCounts(data.results.filter((r) => isBhModulePath(r.path)));
+
 
   const rangeLabel =
     !Number.isFinite(range) || range <= 0
