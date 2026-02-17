@@ -234,16 +234,22 @@ function renderAuthed() {
     render();
   });
 
-  document.querySelector("#refreshBtn").addEventListener("click", async () => {
-    const status = document.querySelector("#status");
-    status.textContent = "Refreshing…";
-    try {
-      await ensureProfileData(true);
-      renderContent(cached);
-    } catch (e) {
-      status.textContent = "Failed to refresh: " + e.message;
-    }
-  });
+    document.querySelector("#refreshBtn").addEventListener("click", async () => {
+      const status = document.querySelector("#status");
+      const refreshBtn = document.querySelector("#refreshBtn");
+      if (refreshBtn) refreshBtn.disabled = true;
+      status.textContent = "Refreshing…";
+      try {
+        const data = await ensureProfileData(true);
+        renderContent(data);
+        if (data?.me?.login) status.textContent = `${data.me.login}`;
+        else status.textContent = "Up to date";
+      } catch (e) {
+        status.textContent = "Failed to refresh: " + e.message;
+      } finally {
+        if (refreshBtn) refreshBtn.disabled = false;
+      }
+    });
 
   const status = document.querySelector("#status");
   const content = document.querySelector("#content");
@@ -295,9 +301,13 @@ async function ensureProfileData(force = false) {
   const token = getToken();
   if (!token) return null;
 
+  // If a request is already running, reuse it even for "force" refresh.
+  // This prevents rapid clicks (or duplicate renders) from triggering a loop
+  // of overlapping fetches that feels like continuous refreshing.
+  if (inflight) return inflight;
+
   const freshForMs = 20_000;
   if (!force && cached && Date.now() - cachedAt < freshForMs) return cached;
-  if (!force && inflight) return inflight;
 
   inflight = loadProfileData(token)
     .then((data) => {
