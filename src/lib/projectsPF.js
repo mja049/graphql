@@ -75,7 +75,7 @@ export function computeCurrentProjectsPF(rows) {
     const grade = row?.grade;
     if (!validGrade(grade)) continue;
     const n = Number(grade);
-    if (n > 0) pass += 1;
+    if (n >= 1.2) pass += 1;
     else fail += 1;           // grade === 0 (or negative, treated as fail)
   }
 
@@ -101,8 +101,8 @@ export function computeAttemptsPF(rows) {
     const grade = row?.grade;
     if (!validGrade(grade)) continue;
     const n = Number(grade);
-    if (n > 0) success += 1;
-    else fail += 1;
+    if (n > 0 && n < 1) fail += 1;
+    else success += 1;
   }
 
   return { success, fail, total: success + fail };

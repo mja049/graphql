@@ -119,10 +119,10 @@ export function passFailCounts(results) {
   let fail = 0;
 
   for (const r of results) {
-    // grade > 0 => pass, grade === 0 => fail
-    const grade = r?.grade;
-    if (!Number.isFinite(grade)) continue;
-    if (grade > 0) pass += 1;
+  // grade >= 1.2 => pass, grade < 1.2 => fail
+  const grade = Number(r?.grade);
+  if (!Number.isFinite(grade)) continue;
+  if (grade >= 1.2) pass += 1;
     else fail += 1;
   }
 
