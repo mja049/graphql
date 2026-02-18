@@ -119,11 +119,11 @@ export function passFailCounts(results) {
   let fail = 0;
 
   for (const r of results) {
-    // Convention: grade >= 1 => pass, grade == 0 => fail
+    // grade > 0 => pass, grade === 0 => fail
     const grade = r?.grade;
     if (!Number.isFinite(grade)) continue;
-    if (grade >= 1) pass += 1;
-    else if (grade === 0) fail += 1;
+    if (grade > 0) pass += 1;
+    else fail += 1;
   }
 
   return { pass, fail, total: pass + fail };

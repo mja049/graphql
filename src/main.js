@@ -14,6 +14,7 @@ import {
   auditTotals,
   passFailCounts,
 } from "./lib/stats.js";
+import { computeAttemptsPF } from "./lib/projectsPF.js";
 import { lineChartSvg, donutChartSvg } from "./lib/charts.js";
 
 let cached = null;
@@ -51,7 +52,6 @@ function isBhModulePath(path) {
 function isExcludedBhXpPath(path) {
   const rest = restAfterProgram(path); // after /user/bh-module/
   if (rest.includes("onboarding")) return true;
-  if (rest.includes("checkpoint")) return true;
 
   // ✅ allow ONLY the top-level "piscine-js" project, but exclude its inner quests/paths
   if (rest.startsWith("piscine-js")) {
@@ -416,6 +416,8 @@ async function loadProfileData(token) {
         path
         grade
         createdAt
+        updatedAt
+        objectId
       }
     }
   `;
@@ -481,7 +483,7 @@ async function loadProfileData(token) {
     moduleAgg.ratio = mAudits.ratio;
   }
 
-  // pass/fail (BH projects only)
+  // pass/fail (BH projects only) — all-time attempts (every row counted)
   try {
     const allResults = await gql(token, bhModuleAllResultsQuery, {
       pattern: MODULE_GQL_ILIKE,
@@ -490,17 +492,23 @@ async function loadProfileData(token) {
 
     const allModuleRows = (allResults?.result || []).filter((r) => isBhModulePath(r.path));
     const rows = allModuleRows.filter((r) => isBhModuleProject(r.path));
-    const mPf = passFailCounts(rows);
-    moduleAgg.pass = mPf.pass;
-    moduleAgg.fail = mPf.fail;
-    moduleAgg.total = mPf.total;
+
+    const attempts = computeAttemptsPF(rows);
+    moduleAgg.pass = attempts.success;
+    moduleAgg.fail = attempts.fail;
+    moduleAgg.total = attempts.total;
+
     moduleAgg.isFallback = false;
   } catch {
-    const moduleResults = results.filter((r) => isBhModulePath(r.path)).filter((r) => isBhModuleProject(r.path));
-    const mPf = passFailCounts(moduleResults);
-    moduleAgg.pass = mPf.pass;
-    moduleAgg.fail = mPf.fail;
-    moduleAgg.total = mPf.total;
+    const moduleResults = results
+      .filter((r) => isBhModulePath(r.path))
+      .filter((r) => isBhModuleProject(r.path));
+
+    const attempts = computeAttemptsPF(moduleResults);
+    moduleAgg.pass = attempts.success;
+    moduleAgg.fail = attempts.fail;
+    moduleAgg.total = attempts.total;
+
     moduleAgg.isFallback = true;
   }
 
@@ -531,10 +539,10 @@ function renderOnePage(data) {
     ? { up: data.moduleAgg.up, down: data.moduleAgg.down, ratio: data.moduleAgg.ratio }
     : auditTotals(filterByLastDays(data.auditTx, range).filter((t) => isBhModulePath(t.path)));
 
-  const statsPf = data.moduleAgg
-    ? { pass: data.moduleAgg.pass, fail: data.moduleAgg.fail, total: data.moduleAgg.total }
-    : passFailCounts(data.results.filter((r) => isBhModulePath(r.path)));
-
+  // all-time attempts (every row counted, no dedup)
+  const statsAttempts = data.moduleAgg
+    ? { success: data.moduleAgg.pass, fail: data.moduleAgg.fail, total: data.moduleAgg.total }
+    : computeAttemptsPF(data.results.filter((r) => isBhModuleProject(r.path)));
 
   const rangeLabel =
     !Number.isFinite(range) || range <= 0
@@ -543,7 +551,7 @@ function renderOnePage(data) {
       ? "Last 6 months"
       : `Last ${range} days`;
 
-  const statsPassText = statsPf.total ? `${statsPf.pass} / ${statsPf.total}` : "0";
+  const statsPassText = statsAttempts.total ? `${statsAttempts.success} / ${statsAttempts.total}` : "0";
 
   return `
     <div class="section">
@@ -583,11 +591,11 @@ function renderOnePage(data) {
         <div class="card">
           <h3>${MODULE_NAME} Pass / Fail</h3>
           <div class="kv">
-            <div><span class="k">Pass</span><span class="v" style="color:var(--green)">${statsPf.pass}</span></div>
-            <div><span class="k">Fail</span><span class="v" style="color:var(--red)">${statsPf.fail}</span></div>
+            <div><span class="k">Success</span><span class="v" style="color:var(--green)">${statsAttempts.success}</span></div>
+            <div><span class="k">Fail</span><span class="v" style="color:var(--red)">${statsAttempts.fail}</span></div>
           </div>
           <p class="muted small" style="margin:10px 0 0">
-            All attempts in ${MODULE_NAME}${data.moduleAgg?.isFallback ? " · fallback" : ""}
+            All-time attempts · BH-MODULE${data.moduleAgg?.isFallback ? " · fallback" : ""}
           </p>
         </div>
       </div>
@@ -649,18 +657,18 @@ function renderOnePage(data) {
           <h3>Pass / Fail — ${MODULE_NAME}</h3>
           ${donutChartSvg(
             [
-              { label: "Pass", value: statsPf.pass, color: "var(--green)" },
-              { label: "Fail", value: statsPf.fail, color: "var(--red)" },
+              { label: "Success", value: statsAttempts.success, color: "var(--green)" },
+              { label: "Fail", value: statsAttempts.fail, color: "var(--red)" },
             ],
             {
               ariaLabel: "Pass fail ratio",
               centerValue: statsPassText,
-              centerLabel: "pass / total",
+              centerLabel: "success / total",
               showPercent: false,
               size: 280,
             }
           )}
-          <p class="muted small" style="margin:12px 0 0">All-time project attempts</p>
+          <p class="muted small" style="margin:12px 0 0">All-time attempts</p>
         </div>
       </div>
     </div>
