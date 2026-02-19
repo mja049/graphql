@@ -101,7 +101,7 @@ export function computeAttemptsPF(rows) {
     const grade = row?.grade;
     if (!validGrade(grade)) continue;
     const n = Number(grade);
-    if (n > 0 && n < 1) fail += 1;
+    if (n >= 0 && n < 1) fail += 1;
     else success += 1;
   }
 
