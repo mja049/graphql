@@ -12,12 +12,19 @@ export function lineChartSvg(points, opts = {}) {
     </svg>`;
   }
 
-  const minY = Math.min(...points.map((p) => p.value));
-  const maxY = Math.max(...points.map((p) => p.value));
+  const rawMin = Math.min(...points.map((p) => p.value));
+  const rawMax = Math.max(...points.map((p) => p.value));
+  // When all values are equal (single data point), anchor to 0 so the
+  // Y-axis shows a meaningful scale instead of flat identical ticks.
+  const minY = rawMin === rawMax ? 0 : rawMin;
+  const maxY = rawMax;
   const yRange = maxY - minY || 1;
 
+  // Center a single point horizontally instead of pinning to left edge.
   const xScale = (i) =>
-    padLeft + (i * (width - padLeft - padRight)) / Math.max(1, points.length - 1);
+    points.length === 1
+      ? padLeft + (width - padLeft - padRight) / 2
+      : padLeft + (i * (width - padLeft - padRight)) / (points.length - 1);
 
   const yScale = (v) =>
     padTop + ((maxY - v) * (height - padTop - padBottom)) / yRange;
@@ -78,8 +85,11 @@ export function lineChartSvg(points, opts = {}) {
       })
       .join("")}
 
-    <text x="${padLeft}" y="${height - 12}" class="label">${first}</text>
-    <text x="${width - padRight}" y="${height - 12}" class="label" text-anchor="end">${last}</text>
+    ${points.length === 1
+      ? `<text x="${(padLeft + width - padRight) / 2}" y="${height - 12}" class="label" text-anchor="middle">${first}</text>`
+      : `<text x="${padLeft}" y="${height - 12}" class="label">${first}</text>
+    <text x="${width - padRight}" y="${height - 12}" class="label" text-anchor="end">${last}</text>`
+    }
   </svg>`;
 }
 

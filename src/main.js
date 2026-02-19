@@ -535,6 +535,28 @@ function renderOnePage(data) {
   const grouped = groupXpByPeriod(filtered, period);
   const cumulative = toCumulative(grouped);
 
+  // For a cumulative chart, always prepend an origin point at 0 so the
+  // chart draws a line rising from zero — a single floating dot is meaningless.
+  if (cumulative.length > 0 && (cumulative.length === 1 || cumulative[0].value !== 0)) {
+    const firstDay = cumulative[0].day;
+    // Derive a label one period step before the first entry
+    let originDay;
+    if (period === "month") {
+      // one month before: YYYY-MM
+      const [y, m] = firstDay.split("-").map(Number);
+      const d = new Date(y, m - 2, 1);
+      originDay = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    } else if (period === "week") {
+      originDay = firstDay.replace(/W(\d+)/, (_, w) => `W${String(Math.max(1, Number(w) - 1)).padStart(2, "0")}`);
+    } else {
+      // day: one day before
+      const d = new Date(firstDay);
+      d.setDate(d.getDate() - 1);
+      originDay = d.toISOString().slice(0, 10);
+    }
+    cumulative.unshift({ day: originDay, value: 0 });
+  }
+
   const statsAudits = data.moduleAgg
     ? { up: data.moduleAgg.up, down: data.moduleAgg.down, ratio: data.moduleAgg.ratio }
     : auditTotals(filterByLastDays(data.auditTx, range).filter((t) => isBhModulePath(t.path)));
